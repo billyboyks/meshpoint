@@ -52,12 +52,17 @@ def cmd_report(_args: argparse.Namespace) -> None:
     run_report()
 
 
-def cmd_hwcheck(args: argparse.Namespace) -> None:
+def run_hwcheck(rest: list[str]) -> None:
+    """Delegate to the platform CLI; bare options mean ``check``."""
     from src.hal.platform.cli import main as hwcheck_main
-    rest = list(args.hwcheck_args or [])
-    if not rest or rest[0] not in ("detect", "reset", "probe", "check"):
+    rest = list(rest)
+    if not rest or rest[0] not in ("detect", "reset", "probe", "check", "-h", "--help"):
         rest = ["check", *rest]
     sys.exit(hwcheck_main(rest))
+
+
+def cmd_hwcheck(args: argparse.Namespace) -> None:
+    run_hwcheck(args.hwcheck_args or [])
 
 
 def cmd_meshcore_radio(args: argparse.Namespace) -> None:
@@ -113,6 +118,12 @@ def main() -> None:
     )
 
     sub.add_parser("version", help="Print version information")
+
+    # argparse.REMAINDER cannot pass a leading "--option" through a
+    # sub-parser ("hwcheck --through chip"), so hand those arguments over
+    # untouched before argparse sees them.
+    if len(sys.argv) > 1 and sys.argv[1] == "hwcheck":
+        run_hwcheck(sys.argv[2:])
 
     args = parser.parse_args()
 

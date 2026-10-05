@@ -223,3 +223,26 @@ def test_sudoers_allows_exact_reset_commands_only():
     ]
     assert len(lines) == 2
     assert all("*" not in ln for ln in lines)
+
+
+# ── `meshpoint hwcheck --through chip` must reach the platform CLI ──
+
+@pytest.mark.parametrize(
+    "argv,expected",
+    [
+        (["hwcheck", "--through", "chip"], ["check", "--through", "chip"]),
+        (["hwcheck", "--through", "rx", "--region", "US", "--seconds", "5"],
+         ["check", "--through", "rx", "--region", "US", "--seconds", "5"]),
+        (["hwcheck"], ["check"]),
+        (["hwcheck", "detect", "--json"], ["detect", "--json"]),
+    ],
+)
+def test_meshpoint_hwcheck_passes_options_through(argv, expected):
+    from src.cli import main as cli_main
+
+    with mock.patch("sys.argv", ["meshpoint", *argv]), \
+            mock.patch("src.hal.platform.cli.main", return_value=0) as hw, \
+            pytest.raises(SystemExit) as exit_info:
+        cli_main.main()
+    hw.assert_called_once_with(expected)
+    assert exit_info.value.code == 0
