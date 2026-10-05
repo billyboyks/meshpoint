@@ -5,12 +5,13 @@ concentrator, booting **Bobcat-Armbian from a microSD card**. The original
 Helium firmware on the internal eMMC is never touched; removing the SD card
 and powering up returns the unit to stock.
 
-> **Validation status: NOT yet validated on a physical G285.**
+> **Validation status: Levels 1-3 validated on a physical G285; Levels 4-11 pending.**
 > Every hardware fact below is labelled with how it is known:
 > **source** (read from a repository file), **field** (community report,
 > other model), **derived** (computed from source facts), **UNKNOWN**
-> (requires a physical G285). The software has unit tests and a simulated
-> GPIO/SPI layer; it has not driven real G285 pins. Section
+> (requires a physical G285). Kernel, SPI, GPIO and SX1302 chip ID are
+> **experimentally validated** on a real G285 (see the next section); HAL start,
+> RX, decode, TX, reboot and power-cycle are not yet. Section
 > [Validation record](#validation-record) lists exactly what to run and
 > return. Meshpoint is **not** considered working on G285 until Levels 5-11
 > there pass, in particular **TX**.
@@ -19,6 +20,29 @@ For G290/G295 see [BOBCAT-300.md](BOBCAT-300.md). G280 (SX1301) is not
 supported.
 
 ---
+
+## Validated on hardware so far
+
+Output of `sudo meshpoint hwcheck --through chip` on a physical G285
+(Meshpoint branch `feat/bobcat-g285-platform`, no boot-config edits made):
+
+| Fact | Result |
+|---|---|
+| Kernel | `6.18.4-current-rockchip64` aarch64 |
+| Image | `BOARD=bobcat-285`, `BOARDFAMILY=rk35xx`, `VERSION=26.02.0-trunk`, `BRANCH=current` |
+| Device-tree model | `Bobcat 285` |
+| SPI node | `/dev/spidev1.0` present **with no overlay added** (mode 0600 root until the service's `ExecStartPre` re-owns it) |
+| Sysfs GPIO | present; gpiochips `gpio0`..`gpio4` at bases 0/32/64/96/128, so 149 → `gpio4`, 125/122 → `gpio3` exactly as derived |
+| Kernel hold | `linux-image-current-rockchip64`, `linux-dtb-current-rockchip64`, `linux-u-boot-bobcat-29x-current` installed and held (the G285 image uses the `29x` U-Boot package name) |
+| I2C adapters | `i2c-0`, `i2c-2`, `i2c-4` only; **no `i2c-1`**, so the HAL's temperature-sensor probe cannot reach an unrelated device (the patched HAL tolerates the open failure) |
+| Python | `3.11.2` (Debian 12 userland) |
+| GPIO sequence | 13 actions ran cleanly: rails 125/122 cycled, reset 149 pulsed active-high |
+| **SX1302 chip ID** | **`0x10` on 5 of 5 reads** at 2 MHz after the sequence |
+
+What this proves: the reset script's GPIO numbers, polarity and the rail
+power-cycle bring the SX1302 up on a G285 and SPI works end to end. What it does
+**not** prove: that 125 and 122 are both necessary, anything about the radios
+(SX1250), RX, or TX.
 
 ## 1. Architecture
 
@@ -371,14 +395,15 @@ is not the SD card: identify with `lsblk` and mount point `/`).
 
 ## 7. Unknowns that need a physical G285
 
-1. Does `/dev/spidev1.0` exist with no overlay? Which SPI controller is it?
-2. Kernel version and U-Boot package name of the 285 image; does it have sysfs GPIO?
-3. Do GPIO 149/125/122 behave as in the reset script on this unit (chip answers `0x10`)?
-4. What do 125 and 122 actually gate; are both required?
+Resolved on hardware: spidev1.0 needs no overlay; kernel is 6.18.4; sysfs GPIO
+is present; 149/125/122 bring the chip up (`0x10`); no `i2c-1` exists; userland
+is Python 3.11.2.
+
+1. Which SPI controller is `spidev1.0` (`ls /sys/class/spi_master`)?
+2. What do 125 and 122 actually gate; are both required?
 5. Is GPIO 147 a PA enable on G285; is it needed for TX?
 6. Is the TX gain table right; real conducted power; is there an external PA?
 7. Is there an SX1261 reachable for spectral scan/LBT?
-8. What is on G285 `i2c-1` (HAL temperature-sensor probe at 0x39/0x3B)?
-9. Does the userland ship Python 3.12+?
-10. Wi-Fi on this image.
-11. Reboot and hard power-cut behaviour (SPI latch).
+8. Does Meshpoint run correctly on Python 3.11.2 (static checks say yes; CI is 3.12)?
+9. Wi-Fi on this image.
+10. Reboot and hard power-cut behaviour (SPI latch).
