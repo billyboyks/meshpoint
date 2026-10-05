@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 
 from src.api.websocket_manager import WebSocketManager
+from src.hal.platform import get_detection, health
 from src.models.device_identity import DeviceIdentity
 from src.relay.relay_manager import RelayManager
 from src.version import __version__
@@ -38,8 +39,14 @@ async def device_info():
 async def device_status():
     uptime = (datetime.now(timezone.utc) - _start_time).total_seconds()
     relay_stats = _relay_manager.get_stats() if _relay_manager else {}
+    radio = health.snapshot()
+    detection = get_detection()
+    radio["platform"] = detection.profile.id
+    radio["platform_confidence"] = detection.confidence
     return {
-        "status": "running",
+        # "degraded" = process is up but the concentrator is not.
+        "status": "degraded" if radio["state"] == health.FAILED else "running",
+        "radio": radio,
         "uptime_seconds": int(uptime),
         "websocket_clients": _ws_manager.client_count,
         "device_id": _identity.device_id,

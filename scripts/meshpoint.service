@@ -23,6 +23,9 @@ StandardError=journal
 SyslogIdentifier=meshpoint
 
 Environment=CONCENTRATOR_CONFIG=/opt/meshpoint/config/local.yaml
+# Platform pin + optional overrides (MESHPOINT_PLATFORM, MESHPOINT_PA_GPIO).
+# Written by install.sh on Bobcat; absent on Raspberry Pi (hence the "-").
+EnvironmentFile=-/etc/meshpoint/platform.env
 Environment=PYTHONUNBUFFERED=1
 Environment=FORCE_COLOR=1
 

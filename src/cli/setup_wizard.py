@@ -186,6 +186,12 @@ def _step_capture_source(config: dict, report: HardwareReport) -> None:
     """Choose the LoRa capture source based on detected hardware."""
     print("  [3/8] Capture source")
 
+    if not report.platform_supported:
+        print(f"        Platform '{report.platform_id}' is not supported or not")
+        print("        identified. Run:  meshpoint hwcheck detect")
+        print("        and pin the model in /etc/meshpoint/platform.env")
+        print("        (MESHPOINT_PLATFORM=bobcat_g285 or bobcat_g29x).")
+
     if report.concentrator_available:
         print(f"        Concentrator detected on {report.spi_devices[0]}")
         print(f"        Hardware: {report.hardware_description}")
@@ -206,6 +212,11 @@ def _step_capture_source(config: dict, report: HardwareReport) -> None:
             "sources": ["serial"],
             "serial_port": port,
         }
+    elif report.platform_id.startswith("bobcat_") and report.platform_supported:
+        print("        Bobcat SPI device not found.")
+        print("        Run:  sudo meshpoint hwcheck --through spi")
+        print("        then re-run 'meshpoint setup'.")
+        config["capture"] = {"sources": []}
     else:
         print("        No LoRa hardware detected.")
         print("        Connect a RAK2287 concentrator or Meshtastic serial radio")

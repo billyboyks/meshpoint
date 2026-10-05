@@ -2,7 +2,8 @@
 #
 # Meshpoint Installer
 #
-# Prepares a fresh Raspberry Pi for Meshpoint operation:
+# Prepares a fresh Raspberry Pi, or a Bobcat Miner 300 running
+# Bobcat-Armbian, for Meshpoint operation:
 #   1. System packages and build tools
 #   2. SPI / UART / GPS kernel config
 #   3. SX1302 HAL (libloragw) compilation
@@ -10,9 +11,15 @@
 #   5. systemd service installation
 #
 # Usage:
-#   sudo ./scripts/install.sh
+#   sudo ./scripts/install.sh [--platform=raspberry_pi|bobcat_g285|bobcat_g29x]
 #
-# After completion, reboot then run:  meshpoint setup
+# The platform is auto-detected (see src/hal/platform/detect.py). On a
+# Bobcat (RK3566) this script NEVER runs `apt-get upgrade`: the kernel,
+# DTB and U-Boot packages are held first, every apt install is simulated
+# and aborted if it would touch them, and the working kernel is recorded
+# in /etc/meshpoint/bobcat-kernel.lock. Re-running is idempotent.
+#
+# After completion, reboot if asked, then run:  meshpoint setup
 #
 set -euo pipefail
 
@@ -44,6 +51,150 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 info "Source directory: ${SCRIPT_DIR}"
+
+# ── Platform detection ─────────────────────────────────────────────
+
+PLATFORM_FLAG=""
+for arg in "$@"; do
+    case "$arg" in
+        --platform=*) PLATFORM_FLAG="${arg#--platform=}" ;;
+        -h|--help)
+            echo "Usage: sudo bash scripts/install.sh [--platform=raspberry_pi|bobcat_g285|bobcat_g29x]"
+            exit 0 ;;
+    esac
+done
+
+PLATFORM_ENV="/etc/meshpoint/platform.env"
+if [ -n "$PLATFORM_FLAG" ]; then
+    case "$PLATFORM_FLAG" in
+        raspberry_pi|bobcat_g285|bobcat_g29x) ;;
+        *) fail "Unknown --platform=${PLATFORM_FLAG} (use raspberry_pi, bobcat_g285 or bobcat_g29x)" ;;
+    esac
+    mkdir -p /etc/meshpoint
+    touch "$PLATFORM_ENV"
+    sed -i '/^MESHPOINT_PLATFORM=/d' "$PLATFORM_ENV"
+    echo "MESHPOINT_PLATFORM=${PLATFORM_FLAG}" >> "$PLATFORM_ENV"
+fi
+
+MP_PLATFORM="raspberry_pi"
+MP_PLATFORM_SUPPORTED=1
+MP_SPI_DEVICE=""
+MP_PLATFORM_CONFIDENCE="low"
+if command -v python3 >/dev/null 2>&1; then
+    eval "$(cd "$SCRIPT_DIR" && python3 -m src.hal.platform detect --shell 2>/dev/null)" \
+        || warn "Platform detection failed; assuming Raspberry Pi"
+fi
+IS_BOBCAT=0
+case "$MP_PLATFORM" in bobcat_*) IS_BOBCAT=1 ;; esac
+NEED_REBOOT=0
+
+if [ "$IS_BOBCAT" = "1" ] && [ "$MP_PLATFORM_SUPPORTED" != "1" ]; then
+    (cd "$SCRIPT_DIR" && python3 -m src.hal.platform detect) || true
+    fail "Bobcat host detected but the model is unsupported or unknown (see above). Re-run with --platform=bobcat_g285 (or bobcat_g29x) if you are sure."
+fi
+info "Platform: ${MP_PLATFORM} (confidence: ${MP_PLATFORM_CONFIDENCE})"
+
+# Meshpoint documents Python 3.12+. The Armbian userland on a Bobcat image
+# is not guaranteed to ship it, so say so up front instead of failing deep
+# inside pip.
+if command -v python3 >/dev/null 2>&1 \
+        && ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'; then
+    warn "System python3 is $(python3 -c 'import platform; print(platform.python_version())'); Meshpoint documents Python 3.12+."
+    warn "Continuing; if pip or startup fails, install python3.12 (not via a kernel-touching upgrade)."
+fi
+
+BOBCAT_LOCK="/etc/meshpoint/bobcat-kernel.lock"
+BOBCAT_HELD=""
+
+# Hold kernel / DTB / U-Boot so no later `apt upgrade` or `full-upgrade`
+# can replace the Bobcat-specific boot stack (Bobcat-Armbian README,
+# "Upgrade Safety"). Pattern-based because the U-Boot package name differs
+# per image; only packages that are actually installed are held.
+bobcat_hold_kernel() {
+    local pkgs
+    pkgs="$(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' \
+                'linux-image-*' 'linux-dtb-*' 'linux-u-boot-*' 2>/dev/null \
+            | awk '$1=="ii"{print $2}' | sort -u | tr '\n' ' ')"
+    if [ -z "${pkgs// /}" ]; then
+        warn "No linux-image/dtb/u-boot packages found to hold (not Bobcat-Armbian?)"
+        return 0
+    fi
+    # shellcheck disable=SC2086
+    apt-mark hold $pkgs >/dev/null
+    BOBCAT_HELD="$pkgs"
+    info "Held (apt-mark hold): ${pkgs}"
+}
+
+# Record the kernel Meshpoint was installed under; refuse to continue if
+# it silently changed (SPI/GPIO behaviour is tied to this kernel + DTB).
+bobcat_kernel_lock() {
+    local cur locked
+    cur="$(uname -r)"
+    mkdir -p /etc/meshpoint
+    if [ -f "$BOBCAT_LOCK" ]; then
+        locked="$(sed -n 's/^kernel_release=//p' "$BOBCAT_LOCK")"
+        if [ -n "$locked" ] && [ "$locked" != "$cur" ] \
+                && [ "${MESHPOINT_ACCEPT_KERNEL:-0}" != "1" ]; then
+            fail "Kernel changed since install (locked ${locked}, running ${cur}). Restore the Bobcat-Armbian kernel, or re-run with MESHPOINT_ACCEPT_KERNEL=1 if you verified SPI + 'meshpoint hwcheck' on the new kernel."
+        fi
+    fi
+    if [ ! -f "$BOBCAT_LOCK" ] || [ "${MESHPOINT_ACCEPT_KERNEL:-0}" = "1" ]; then
+        {
+            echo "# Written by Meshpoint install.sh. Kernel the install was verified under."
+            echo "kernel_release=${cur}"
+            echo "machine=$(uname -m)"
+            echo "platform=${MP_PLATFORM}"
+            echo "held_packages=${BOBCAT_HELD}"
+            echo "recorded_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        } > "$BOBCAT_LOCK"
+        info "Recorded kernel lock: ${cur}"
+    fi
+}
+
+# apt install that cannot silently replace the Bobcat boot stack.
+apt_install() {
+    if [ "$IS_BOBCAT" = "1" ]; then
+        local sim bad
+        sim="$(apt-get -s install -y "$@" 2>&1 || true)"
+        bad="$(echo "$sim" | grep -E '^(Inst|Remv) (linux-image|linux-dtb|linux-u-boot)' || true)"
+        if [ -n "$bad" ]; then
+            echo "$bad" >&2
+            fail "apt would change the kernel/DTB/U-Boot (lines above). Nothing installed."
+        fi
+    fi
+    apt-get install -y -qq "$@"
+}
+
+# Make sure the SX1302's spidev node exists. Never edits boot config
+# unless the model's overlay requirement is known from evidence.
+bobcat_ensure_spi() {
+    if [ -n "$MP_SPI_DEVICE" ] && [ -e "$MP_SPI_DEVICE" ]; then
+        info "SPI device ${MP_SPI_DEVICE} present"
+        return 0
+    fi
+    case "$MP_PLATFORM" in
+        bobcat_g29x)
+            local envf=/boot/armbianEnv.txt
+            [ -f "$envf" ] || fail "${envf} not found; cannot enable the spi5-m1 overlay"
+            if grep -qE '^overlays=(.* )?spi5-m1( .*)?$' "$envf"; then
+                info "spi5-m1 overlay already in ${envf}; reboot required"
+            elif grep -q '^overlays=' "$envf"; then
+                sed -i -E 's/^(overlays=.*)$/\1 spi5-m1/' "$envf"
+                info "Added spi5-m1 to the overlays line in ${envf}"
+            else
+                echo "overlays=spi5-m1" >> "$envf"
+                info "Added overlays=spi5-m1 to ${envf}"
+            fi
+            NEED_REBOOT=1
+            ;;
+        bobcat_g285)
+            warn "${MP_SPI_DEVICE} is missing. UNKNOWN whether the G285 image needs an SPI overlay."
+            warn "Not editing boot config. Diagnostics to report:"
+            ls /sys/class/spi_master 2>&1 | sed 's/^/        spi_master: /' || true
+            ls /boot/dtb/rockchip/overlay 2>/dev/null | grep -i spi | sed 's/^/        overlay: /' || true
+            ;;
+    esac
+}
 
 # Detect upgrade vs fresh install for the post-install banner.
 # An existing local.yaml or an enabled meshpoint service is the
@@ -86,48 +237,65 @@ fi
 
 # ── 1. System packages ─────────────────────────────────────────────
 
-info "Updating system packages..."
+info "Updating package lists..."
 apt-get update -qq
-apt-get upgrade -y -qq
+
+if [ "$IS_BOBCAT" = "1" ]; then
+    # NEVER upgrade on a Bobcat: a generic kernel/U-Boot upgrade can break
+    # boot (Bobcat-Armbian README). Hold first, then only install what we need.
+    bobcat_hold_kernel
+    bobcat_kernel_lock
+    info "Bobcat: skipping 'apt-get upgrade' (kernel safety)"
+else
+    info "Upgrading system packages..."
+    apt-get upgrade -y -qq
+fi
 
 info "Installing build tools and dependencies..."
-apt-get install -y -qq \
+apt_install \
     build-essential \
     git \
     python3 \
     python3-venv \
     python3-pip \
     libsqlite3-dev \
-    i2c-tools
+    i2c-tools \
+    rsync
 
-# ── 2. Enable SPI ──────────────────────────────────────────────────
+if [ "$IS_BOBCAT" = "1" ]; then
+    # ── 2. Bobcat: SPI comes from the Armbian device tree, not raspi-config
+    bobcat_ensure_spi
+else
+    # ── 2. Enable SPI ──────────────────────────────────────────────────
 
-info "Enabling SPI interface..."
-raspi-config nonint do_spi 0 2>/dev/null || warn "raspi-config SPI failed (may already be enabled)"
+    info "Enabling SPI interface..."
+    raspi-config nonint do_spi 0 2>/dev/null || warn "raspi-config SPI failed (may already be enabled)"
 
-# ── 2b. Enable I2C ────────────────────────────────────────────────
+    # ── 2b. Enable I2C ────────────────────────────────────────────────
 
-info "Enabling I2C interface..."
-raspi-config nonint do_i2c 0 2>/dev/null || warn "raspi-config I2C failed (may already be enabled)"
+    info "Enabling I2C interface..."
+    raspi-config nonint do_i2c 0 2>/dev/null || warn "raspi-config I2C failed (may already be enabled)"
 
-# ── 3. Enable UART for GPS ─────────────────────────────────────────
+    # ── 3. Enable UART for GPS ─────────────────────────────────────────
 
-info "Enabling UART hardware..."
-raspi-config nonint do_serial_hw 0 2>/dev/null || warn "raspi-config UART failed"
+    info "Enabling UART hardware..."
+    raspi-config nonint do_serial_hw 0 2>/dev/null || warn "raspi-config UART failed"
 
-info "Disabling serial console (needed for GPS on /dev/ttyAMA0)..."
-raspi-config nonint do_serial_cons 1 2>/dev/null || warn "raspi-config serial console failed"
+    info "Disabling serial console (needed for GPS on /dev/ttyAMA0)..."
+    raspi-config nonint do_serial_cons 1 2>/dev/null || warn "raspi-config serial console failed"
 
-# Disable Bluetooth on primary UART so GPS gets /dev/ttyAMA0
-if [ -f "$BOOT_CONFIG" ]; then
-    if ! grep -q "dtoverlay=disable-bt" "$BOOT_CONFIG"; then
-        info "Adding dtoverlay=disable-bt to ${BOOT_CONFIG}"
-        echo "" >> "$BOOT_CONFIG"
-        echo "# Meshpoint: free primary UART for GPS" >> "$BOOT_CONFIG"
-        echo "dtoverlay=disable-bt" >> "$BOOT_CONFIG"
-    else
-        info "dtoverlay=disable-bt already present"
+    # Disable Bluetooth on primary UART so GPS gets /dev/ttyAMA0
+    if [ -f "$BOOT_CONFIG" ]; then
+        if ! grep -q "dtoverlay=disable-bt" "$BOOT_CONFIG"; then
+            info "Adding dtoverlay=disable-bt to ${BOOT_CONFIG}"
+            echo "" >> "$BOOT_CONFIG"
+            echo "# Meshpoint: free primary UART for GPS" >> "$BOOT_CONFIG"
+            echo "dtoverlay=disable-bt" >> "$BOOT_CONFIG"
+        else
+            info "dtoverlay=disable-bt already present"
+        fi
     fi
+
 fi
 
 # ── 3b. Install gpsd for USB GPS receivers ─────────────────────────
@@ -141,7 +309,7 @@ fi
 # already matches.
 
 info "Installing gpsd for USB GPS receivers..."
-apt-get install -y -qq gpsd gpsd-clients
+apt_install gpsd gpsd-clients
 
 GPSD_DEFAULTS="/etc/default/gpsd"
 if [ -f "$GPSD_DEFAULTS" ]; then
@@ -494,7 +662,13 @@ if ! id -u meshpoint &>/dev/null; then
 fi
 
 # Grant access to SPI, UART, GPIO, and I2C
-usermod -a -G spi,gpio,dialout,i2c meshpoint 2>/dev/null || true
+# Add one group at a time: `usermod -G a,b` aborts entirely if any group
+# is missing (Armbian has no `spi`/`gpio` groups by default).
+for grp in spi gpio dialout i2c; do
+    if getent group "$grp" >/dev/null; then
+        usermod -a -G "$grp" meshpoint 2>/dev/null || true
+    fi
+done
 
 # Grant the service user read access to its own systemd journal so the
 # dashboard's `meshpoint logs` button (and `journalctl -u meshpoint`
@@ -520,6 +694,26 @@ fi
 info "Installing sudoers rule for service management..."
 cp "${MESHPOINT_DIR}/config/sudoers-meshpoint" /etc/sudoers.d/meshpoint
 chmod 440 /etc/sudoers.d/meshpoint
+
+# ── 8b. Pin the platform (Bobcat) ───────────────────────────────────
+
+if [ "$IS_BOBCAT" = "1" ]; then
+    mkdir -p /etc/meshpoint
+    touch "$PLATFORM_ENV"
+    if ! grep -q '^MESHPOINT_PLATFORM=' "$PLATFORM_ENV"; then
+        echo "MESHPOINT_PLATFORM=${MP_PLATFORM}" >> "$PLATFORM_ENV"
+        info "Pinned platform in ${PLATFORM_ENV}: ${MP_PLATFORM}"
+    fi
+    if ! grep -q 'MESHPOINT_PA_GPIO' "$PLATFORM_ENV"; then
+        cat >> "$PLATFORM_ENV" <<'_PLATFORM_ENV'
+# Optional PA-enable GPIO. G285: NOT driven by default (no G285 evidence;
+# the G295 field report uses sysfs GPIO 147). If transmit is silent after
+# `meshpoint hwcheck` passes, try:  MESHPOINT_PA_GPIO=147   (see docs/BOBCAT-G285.md)
+# Set to `off` to disable it on G29x.
+#MESHPOINT_PA_GPIO=147
+_PLATFORM_ENV
+    fi
+fi
 
 # ── 9. Configure journald log rotation ─────────────────────────────
 
@@ -564,6 +758,26 @@ if [ "$IS_UPGRADE" = "1" ]; then
     echo ""
     echo "  A reboot is NOT required: SPI/UART/I2C are"
     echo "  already configured from the original install."
+    echo ""
+elif [ "$IS_BOBCAT" = "1" ]; then
+    echo "  Meshpoint installation complete! (${MP_PLATFORM})"
+    echo "==========================================="
+    echo ""
+    echo "  Kernel/DTB/U-Boot are held; apt-get upgrade was NOT run."
+    echo ""
+    echo "  Next steps:"
+    echo ""
+    if [ "$NEED_REBOOT" = "1" ]; then
+        echo "  1. Reboot to apply the SPI overlay:   sudo reboot"
+    else
+        echo "  1. (no reboot needed)"
+    fi
+    echo "  2. Prove the hardware BEFORE setup:"
+    echo "       sudo systemctl stop meshpoint"
+    echo "       sudo meshpoint hwcheck --through chip"
+    echo "  3. Then:   sudo meshpoint setup"
+    echo ""
+    echo "  Always shut down cleanly:  sudo poweroff"
     echo ""
 else
     echo "  Meshpoint installation complete!"

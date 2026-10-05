@@ -2,8 +2,9 @@
 
 Provides Python bindings to the C library functions needed for
 concentrator-based packet capture and LoRa transmission via the
-SX1261 companion radio. Only functional on a Raspberry Pi with
-the patched libloragw.so compiled and installed.
+SX1261 companion radio. Needs the patched libloragw.so compiled and
+installed, on a supported host (Raspberry Pi or Bobcat Miner 300; see
+``src/hal/platform``).
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ from src.hal.sx1302_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+_RESET_SCRIPT = "/opt/meshpoint/scripts/reset_concentrator.sh"
 
 LGW_HAL_SUCCESS = 0
 LGW_HAL_ERROR = -1
@@ -122,18 +125,28 @@ class SX1302Wrapper:
         logger.info("Loaded libloragw from %s", self._lib_path)
 
     def reset(self, gpio_pins: list[int] | None = None) -> None:
-        """Toggle the concentrator reset pins (required before lgw_start).
+        """Reset the concentrator (required before lgw_start).
 
-        Different carrier boards route SX1302 reset to different GPIOs
-        (pin 17 or 25). Both are toggled by default since asserting
-        reset on an unconnected pin is harmless.
-        Delegated to systemd ExecStartPre for root access;
-        this method is a best-effort fallback via pinctrl subprocess.
+        Platform-aware. On a platform with a native GPIO profile (Bobcat)
+        the profile's power/reset sequence runs: in-process when root,
+        otherwise through the sudoers-approved reset script. On
+        Raspberry Pi the original pinctrl path below runs unchanged.
 
-        On some RAK Hotspot V2 / RAK7248 carriers the reset timing is
-        sensitive. You can increase the hold time with the environment
-        variable CONCENTRATOR_RESET_HOLD_SEC (default: 0.1).
+        Pi path: different carrier boards route SX1302 reset to different
+        GPIOs (pin 17 or 25). Both are toggled by default since asserting
+        reset on an unconnected pin is harmless. Delegated to systemd
+        ExecStartPre for root access; this is a best-effort fallback via
+        pinctrl subprocess. On some RAK Hotspot V2 / RAK7248 carriers the
+        reset timing is sensitive; raise the hold time with the
+        environment variable CONCENTRATOR_RESET_HOLD_SEC (default: 0.1).
         """
+        from src.hal.platform import get_active_profile
+
+        profile = get_active_profile()
+        if profile.native_gpio:
+            self._reset_native(profile)
+            return
+
         import subprocess
         import time
 
@@ -160,6 +173,37 @@ class SX1302Wrapper:
             logger.warning(
                 "In-app GPIO reset failed (pins %s) -- relying on systemd ExecStartPre",
                 gpio_pins,
+            )
+
+    def _reset_native(self, profile) -> None:
+        """Run the platform's GPIO start sequence (Bobcat)."""
+        import subprocess
+
+        from src.hal.platform import sequencer
+        from src.hal.platform.gpio import GpioError
+
+        try:
+            if getattr(os, "geteuid", lambda: 1)() == 0:
+                sequencer.run(
+                    profile, "start",
+                    options=sequencer.SequenceOptions.from_env(),
+                )
+            else:
+                script = (
+                    _RESET_SCRIPT
+                    if os.path.exists(_RESET_SCRIPT)
+                    else "scripts/reset_concentrator.sh"
+                )
+                subprocess.run(
+                    ["sudo", "-n", "/bin/bash", script],
+                    check=True, capture_output=True, timeout=60,
+                )
+            logger.info("Concentrator reset via %s GPIO sequence", profile.id)
+        except (OSError, GpioError, ValueError, subprocess.SubprocessError) as exc:
+            logger.error(
+                "Concentrator GPIO reset failed on %s: %s "
+                "(the SX1302 preflight will confirm whether the chip is alive)",
+                profile.id, exc,
             )
 
     def configure(self, plan: ConcentratorChannelPlan) -> None:

@@ -34,6 +34,12 @@ meshpoint ALL=(ALL) NOPASSWD: /usr/bin/git rev-parse HEAD
 # Settings → Updates install_status (read branch + SHA from root-owned tree)
 meshpoint ALL=(ALL) NOPASSWD: /usr/bin/git rev-parse *
 
+# ── Concentrator reset (Bobcat: GPIO sysfs needs root) ────────────────
+# SX1302Wrapper.reset() re-runs the platform power/reset sequence when
+# the dashboard restarts the RX pipeline. Exact argv only.
+meshpoint ALL=(ALL) NOPASSWD: /bin/bash /opt/meshpoint/scripts/reset_concentrator.sh
+meshpoint ALL=(ALL) NOPASSWD: /bin/bash /opt/meshpoint/scripts/reset_concentrator.sh --hold
+
 # ── Post-update hooks ─────────────────────────────────────────────────
 meshpoint ALL=(ALL) NOPASSWD: /opt/meshpoint/venv/bin/pip install *
 meshpoint ALL=(ALL) NOPASSWD: /bin/bash /opt/meshpoint/scripts/install.sh

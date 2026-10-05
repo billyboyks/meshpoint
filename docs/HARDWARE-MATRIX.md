@@ -104,8 +104,12 @@ symlinks to `/dev/spidev0.0`).
 | **MeshCore USB** | Powered hub reported; OTG unconfirmed |
 | **Typical price (used)** | ~$15-40 |
 
-Models **G290** (SX1302) are expected to match; **G285** is untested in this
-guide. Do not confuse with **Nebra Indoor Rock Pi 4** units that ship **SX1301**
+Models **G290** (SX1302) are expected to match. **G285** (microSD boot, SPI
+`spidev1.0`) is implemented as platform `bobcat_g285` but **not yet validated
+on hardware**: see [Bobcat G285 guide](BOBCAT-G285.md). Platform detection,
+SPI node and GPIO sequences are now built in (`src/hal/platform/`); the manual
+`ExecStartPre` drop-in and SPI symlinks described in older versions of this
+page are obsolete. Do not confuse with **Nebra Indoor Rock Pi 4** units that ship **SX1301**
 concentrators (not supported).
 
 ---

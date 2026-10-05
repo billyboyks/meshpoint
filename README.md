@@ -153,12 +153,15 @@ sudo meshpoint setup
 
 ### Option F: Bobcat Miner 300 (~$15-40 used, community path)
 
-Retired **Bobcat Miner 300** units (models **G290** / **G295** reported) bundle a
-**Rockchip RK3566** host, **64 GB eMMC**, and an onboard **SX1302** concentrator.
-They are not Raspberry Pis: you flash **[Bobcat-Armbian](https://github.com/sicXnull/Bobcat-Armbian)**,
-pin the vendor kernel (do not run a generic `apt upgrade`), enable the `spi5-m1`
-overlay, then install Meshpoint with concentrator SPI on `/dev/spidev5.0` and a
-small systemd drop-in for GPIO reset and SPI symlinks.
+Retired **Bobcat Miner 300** units (models **G285** / **G290** / **G295**) bundle a
+**Rockchip RK3566** host, eMMC, and an onboard **SX1302** concentrator.
+They are not Raspberry Pis: you flash **[Bobcat-Armbian](https://github.com/sicXnull/Bobcat-Armbian)**
+and install Meshpoint with `sudo bash scripts/install.sh --platform=bobcat_g285`
+(or `bobcat_g29x`). Meshpoint detects the platform, owns the SPI node and GPIO
+reset sequence, holds the vendor kernel and never runs `apt-get upgrade` on a
+Bobcat. The **G285** boots from microSD and leaves the eMMC untouched
+(**[G285 guide](docs/BOBCAT-G285.md)**; implemented, awaiting hardware
+validation). `meshpoint hwcheck` proves the hardware layer by layer.
 
 Community-validated (July 2026): Meshtastic TX/RX on G295; upgrade from v0.7.3.x
 to v0.7.4+ reported smooth when `install.sh` skips `apt-get upgrade`. MeshCore

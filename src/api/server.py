@@ -834,17 +834,29 @@ def _inject_tx_gain_into_source(coord: PipelineCoordinator) -> None:
         return
 
     async def _start_with_tx_gain() -> None:
-        conc_source._wrapper.load()
-        conc_source._wrapper.reset()
-        conc_source._wrapper.configure(conc_source._channel_plan)
-        conc_source._wrapper.configure_tx_gain(0, RAK2287_TX_GAIN_LUT)
-        logger.info(
-            "TX gain LUT configured: %d entries on RF chain 0",
-            len(RAK2287_TX_GAIN_LUT),
+        from src.hal.platform import get_detection, health
+
+        health.set_starting(
+            conc_source._spi_path, get_detection().profile.id
         )
-        conc_source._wrapper.start()
-        conc_source._wrapper.set_syncword(conc_source._syncword)
+        try:
+            conc_source.check_platform()
+            conc_source._wrapper.load()
+            conc_source._wrapper.reset()
+            conc_source.preflight()
+            conc_source._wrapper.configure(conc_source._channel_plan)
+            conc_source._wrapper.configure_tx_gain(0, RAK2287_TX_GAIN_LUT)
+            logger.info(
+                "TX gain LUT configured: %d entries on RF chain 0",
+                len(RAK2287_TX_GAIN_LUT),
+            )
+            conc_source._wrapper.start()
+            conc_source._wrapper.set_syncword(conc_source._syncword)
+        except Exception as exc:
+            health.set_failed(f"{type(exc).__name__}: {exc}")
+            raise
         conc_source._running = True
+        health.set_ok()
         logger.info(
             "Concentrator started with TX gain (syncword=0x%02X)",
             conc_source._syncword,

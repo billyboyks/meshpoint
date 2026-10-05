@@ -1,4 +1,4 @@
-"""Auto-detect Meshpoint hardware on a Raspberry Pi.
+"""Auto-detect Meshpoint hardware (Raspberry Pi or Bobcat Miner 300).
 
 Probes for SPI concentrator devices, I2C carrier board signatures,
 serial Meshtastic radios, and GPS UART to help the setup wizard
@@ -14,11 +14,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+from src.hal.platform import get_detection
+
+CARRIER_BOBCAT = "bobcat"
 CARRIER_SENSECAP_M1 = "sensecap_m1"
 CARRIER_RAK = "rak"
 CARRIER_UNKNOWN = "unknown"
 
 _HARDWARE_DESCRIPTIONS = {
+    CARRIER_BOBCAT: "Bobcat Miner 300 (SX1302, RK3566)",
     CARRIER_SENSECAP_M1: "SenseCap M1 (WM1303)",
     CARRIER_RAK: "RAK2287 + Raspberry Pi 4",
     CARRIER_UNKNOWN: "SX1302/SX1303 + Raspberry Pi 4",
@@ -46,6 +50,9 @@ class HardwareReport:
     libloragw_installed: bool = False
     carrier_type: str = CARRIER_UNKNOWN
     hardware_description: str = _HARDWARE_DESCRIPTIONS[CARRIER_UNKNOWN]
+    platform_id: str = "raspberry_pi"
+    platform_supported: bool = True
+    platform_warnings: list[str] = field(default_factory=list)
 
 
 def detect_all() -> HardwareReport:
@@ -62,12 +69,27 @@ def detect_all() -> HardwareReport:
     report.hardware_description = _HARDWARE_DESCRIPTIONS.get(
         report.carrier_type, _HARDWARE_DESCRIPTIONS[CARRIER_UNKNOWN]
     )
+    det = get_detection()
+    report.platform_id = det.profile.id
+    report.platform_supported = det.profile.supported
+    report.platform_warnings = list(det.warnings)
+    if det.is_bobcat:
+        report.hardware_description = det.profile.hardware_description
     report.gps = probe_gps()
     return report
 
 
 def detect_spi_devices() -> list[str]:
-    """Find SPI device nodes that could be an SX1302/SX1303 concentrator."""
+    """Find SPI device nodes that could be an SX1302/SX1303 concentrator.
+
+    The active platform's own node (``/dev/spidev1.0`` on a G285,
+    ``/dev/spidev5.0`` on a G29x) is listed first; unsupported Bobcat
+    models yield nothing so the wizard cannot pick a wrong bus.
+    """
+    det = get_detection()
+    if det.is_bobcat:
+        node = det.profile.spi_device
+        return [node] if det.profile.supported and node and os.path.exists(node) else []
     return sorted(glob.glob("/dev/spidev0.*"))
 
 
@@ -78,7 +100,12 @@ def detect_carrier_board() -> str:
     sensor at 0x39.  RAK Pi HATs have an EEPROM at 0x50 (and sometimes
     0x60) but no temperature sensor.  Requiring both addresses avoids
     false positives.
+
+    Bobcat hosts are identified by platform detection, not by probing I2C
+    bus 1 (which is a different bus on the RK3566).
     """
+    if get_detection().is_bobcat:
+        return CARRIER_BOBCAT
     try:
         result = subprocess.run(
             ["i2cdetect", "-y", "1"],
@@ -214,6 +241,10 @@ def print_report(report: HardwareReport) -> None:
 
     print(f"  libloragw.so:    {'installed' if report.libloragw_installed else 'NOT found'}")
     print(f"  Concentrator:    {'ready' if report.concentrator_available else 'not available'}")
+    print(f"  Platform:        {report.platform_id}"
+          f"{'' if report.platform_supported else '  (UNSUPPORTED)'}")
+    for warning in report.platform_warnings:
+        print(f"  Platform note:   {warning}")
     print(f"  Carrier board:   {report.hardware_description}")
 
     if report.serial_ports:

@@ -35,6 +35,9 @@ capture:
   #   - serial_port: "/dev/ttyUSB1"
   #     label: "868"
   serial: []
+  # SX1302 spidev node. "auto" = the detected platform's node
+  # (Bobcat G285: /dev/spidev1.0, G29x: /dev/spidev5.0). The setup wizard
+  # writes the explicit path. Raspberry Pi: /dev/spidev0.0.
   concentrator_spi_device: "/dev/spidev0.0"
   meshcore_usb:
     serial_port: null

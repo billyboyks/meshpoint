@@ -2,6 +2,28 @@
 
 ### Unreleased
 
+#### Bobcat Miner 300 (G285 / G290 / G295)
+
+- **Explicit platform layer** (`src/hal/platform/`): detects `raspberry_pi`,
+  `bobcat_g285`, `bobcat_g29x` (G280/unknown are refused), owns the SX1302
+  SPI node and GPIO power/reset sequence per model, and replaces the manual
+  systemd drop-in, SPI symlinks and `install.sh` edits. Raspberry Pi
+  behaviour is unchanged.
+- **Kernel-safe installer on Bobcat.** `install.sh` skips `apt-get upgrade`,
+  holds `linux-image-*`/`linux-dtb-*`/`linux-u-boot-*`, simulates each
+  `apt install` and aborts if it would touch them, records the kernel in
+  `/etc/meshpoint/bobcat-kernel.lock`. Groups are added one at a time
+  (Armbian has no `spi`/`gpio` group).
+- **Dead radio is no longer "running".** A chip-version preflight (the same
+  SPI read as `lgw_connect`) runs after reset; `0x00`/`0xFF` raise. The new
+  `radio` block in `/api/device/status`, `"status": "degraded"`, the
+  dashboard sidebar and `meshpoint status` report it.
+- **`meshpoint hwcheck`**: staged proof (kernel pin, SPI, GPIO, chip ID, HAL,
+  RX) that stops at the first broken layer.
+- `capture.concentrator_spi_device: auto` selects the platform's node.
+- Docs: new [BOBCAT-G285.md](BOBCAT-G285.md) (SD-boot, evidence-labelled,
+  **pending physical validation**); [BOBCAT-300.md](BOBCAT-300.md) rewritten.
+
 #### Dashboard
 
 - **Local map tiles.** OSM raster with a dark invert filter, replacing

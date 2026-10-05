@@ -21,6 +21,7 @@ def show_status() -> None:
     print("  " + "=" * 40)
 
     _show_service_state()
+    _show_platform()
     _show_config_state()
     _show_api_status()
 
@@ -51,6 +52,17 @@ def _show_service_state() -> None:
             print(f"  PID:             {pid}")
 
 
+def _show_platform() -> None:
+    """Passive platform facts (no SPI or GPIO access)."""
+    from src.hal.platform import get_detection
+
+    det = get_detection()
+    flag = "" if det.profile.supported else "  (UNSUPPORTED)"
+    print(f"  Platform:        {det.profile.id} [{det.confidence}]{flag}")
+    for warning in det.warnings:
+        print(f"                   ! {warning}")
+
+
 def _show_config_state() -> None:
     """Check whether local.yaml exists."""
     if LOCAL_CONFIG.exists():
@@ -68,6 +80,21 @@ def _show_api_status() -> None:
     except Exception:
         print("  API:             unreachable")
         return
+
+    radio = data.get("radio") or {}
+    radio_state = radio.get("state", "unknown")
+    label = {
+        "ok": "OK",
+        "failed": "FAILED",
+        "starting": "starting",
+        "unconfigured": "no concentrator configured",
+    }.get(radio_state, radio_state)
+    chip = f", SX1302 {radio['chip_version']}" if radio.get("chip_version") else ""
+    print(f"  Radio:           {label}{chip}")
+    if radio.get("error"):
+        print(f"                   ! {radio['error']}")
+    if data.get("status") == "degraded":
+        print("  Overall:         DEGRADED (service up, concentrator not running)")
 
     uptime = timedelta(seconds=data.get("uptime_seconds", 0))
     device_id = data.get("device_id", "unknown")

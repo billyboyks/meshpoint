@@ -52,6 +52,14 @@ def cmd_report(_args: argparse.Namespace) -> None:
     run_report()
 
 
+def cmd_hwcheck(args: argparse.Namespace) -> None:
+    from src.hal.platform.cli import main as hwcheck_main
+    rest = list(args.hwcheck_args or [])
+    if not rest or rest[0] not in ("detect", "reset", "probe", "check"):
+        rest = ["check", *rest]
+    sys.exit(hwcheck_main(rest))
+
+
 def cmd_meshcore_radio(args: argparse.Namespace) -> None:
     from src.cli.meshcore_radio_command import run_meshcore_radio
     run_meshcore_radio(args)
@@ -79,6 +87,12 @@ def main() -> None:
     sub.add_parser("logs", help="Tail the service logs (journalctl)")
     sub.add_parser("restart", help="Restart the meshpoint service")
     sub.add_parser("stop", help="Stop the meshpoint service")
+    hw = sub.add_parser(
+        "hwcheck",
+        help="Staged hardware proof: kernel, SPI, GPIO, SX1302 chip ID, HAL, RX "
+             "(e.g. 'hwcheck --through chip'; 'hwcheck detect')",
+    )
+    hw.add_argument("hwcheck_args", nargs=argparse.REMAINDER)
     mc = sub.add_parser(
         "meshcore-radio",
         help="Configure MeshCore companion radio frequency",
@@ -109,6 +123,7 @@ def main() -> None:
         "logs": cmd_logs,
         "restart": cmd_restart,
         "stop": cmd_stop,
+        "hwcheck": cmd_hwcheck,
         "meshcore-radio": cmd_meshcore_radio,
         "reset-password": cmd_reset_password,
         "version": cmd_version,

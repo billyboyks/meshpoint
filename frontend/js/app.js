@@ -380,9 +380,12 @@ async function _updateStats() {
         _setText('stat-uptime-val', _formatUptime(device.uptime_seconds || 0));
 
         _setText('sidebar-device-name', _resolveDeviceLabel(device));
-        const statusText = device.firmware_version
+        let statusText = device.firmware_version
             ? `online · v${device.firmware_version}`
             : 'online';
+        if (device.radio && device.radio.state === 'failed') {
+            statusText = 'RADIO DOWN · ' + statusText;
+        }
         _setText('sidebar-status-text', statusText);
         const statusDot = document.getElementById('sidebar-status-dot');
         if (statusDot) {

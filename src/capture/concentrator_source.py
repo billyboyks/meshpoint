@@ -1,7 +1,8 @@
-"""Capture source for the RAK2287 SX1302 LoRa concentrator.
+"""Capture source for the SX1302 LoRa concentrator.
 
-Requires a Raspberry Pi with the RAK2287 HAT connected via SPI,
-and the patched libloragw.so compiled and installed.
+Requires a supported host (Raspberry Pi + RAK2287-class carrier, or a
+Bobcat Miner 300) with the concentrator on SPI, and the patched
+libloragw.so compiled and installed.
 """
 
 from __future__ import annotations
@@ -14,6 +15,12 @@ from typing import TYPE_CHECKING, AsyncIterator, Optional
 
 from src.capture.base import CaptureSource
 from src.hal.concentrator_config import ConcentratorChannelPlan
+from src.hal.platform import health
+from src.hal.platform.chip_probe import (
+    ConcentratorHardwareError,
+    require_chip,
+)
+from src.hal.platform.detect import resolve_spi_device
 from src.hal.sx1302_wrapper import BW_MAP, SX1302Wrapper
 from src.models.packet import Protocol, RawCapture
 from src.models.signal import SignalMetrics
@@ -37,6 +44,8 @@ class ConcentratorCaptureSource(CaptureSource):
         radio_config: Optional[RadioConfig] = None,
         sx1261_spi_path: str = "",
     ):
+        spi_path = resolve_spi_device(spi_path)
+        self._spi_path = spi_path
         self._wrapper = SX1302Wrapper(
             lib_path=lib_path,
             spi_path=spi_path,
@@ -79,13 +88,53 @@ class ConcentratorCaptureSource(CaptureSource):
         """(crc_bad_total, no_crc_total) since concentrator start."""
         return self._wrapper.crc_bad_count, self._wrapper.no_crc_count
 
+    def check_platform(self) -> None:
+        """Refuse to start on a host we cannot drive safely."""
+        from src.hal.platform import get_detection
+
+        det = get_detection()
+        if not det.profile.supported:
+            raise ConcentratorHardwareError(
+                f"platform {det.profile.id} is not supported: "
+                + "; ".join(det.warnings or det.profile.notes)
+            )
+        for w in det.warnings:
+            logger.warning("Platform warning (%s): %s", det.profile.id, w)
+
+    def preflight(self) -> None:
+        """Fail loudly if the SX1302 does not answer on SPI.
+
+        Reads the chip-version register (the same transaction
+        ``lgw_connect`` performs) after the reset and before
+        ``lgw_start``. A dead (0x00) or floating (0xFF) bus raises
+        ``ConcentratorHardwareError`` instead of letting the service
+        report "running" with no radio.
+        """
+        result = require_chip(self._spi_path, retries=6, retry_delay=0.5)
+        if result.values:
+            health.set_chip_version(result.values[-1])
+        logger.info("SX1302 preflight OK: %s", result.message())
+
     async def start(self) -> None:
+        try:
+            await self._start_impl()
+        except Exception as exc:
+            health.set_failed(f"{type(exc).__name__}: {exc}")
+            raise
+        health.set_ok()
+
+    async def _start_impl(self) -> None:
+        from src.hal.platform import get_detection
+
+        health.set_starting(self._spi_path, get_detection().profile.id)
+        self.check_platform()
         self._wrapper.load()
 
         late_reset = os.environ.get("CONCENTRATOR_LATE_RESET", "0") == "1"
 
         if not late_reset:
             self._wrapper.reset()
+            self.preflight()
 
         self._wrapper.configure(self._channel_plan)
 
@@ -95,6 +144,7 @@ class ConcentratorCaptureSource(CaptureSource):
             # carriers where an earlier reset (from the pre-script or early
             # Python call) can leave the chip in a bad state.
             self._wrapper.reset()
+            self.preflight()
 
         self._wrapper.start()
         self._wrapper.set_syncword(self._syncword)

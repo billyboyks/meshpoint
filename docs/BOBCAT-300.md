@@ -2,224 +2,91 @@
 
 Guide for repurposing a **Bobcat Miner 300** (Helium-era LoRa miner) as a
 Meshpoint. These units use a **Rockchip RK3566** host (not a Raspberry Pi),
-onboard **eMMC**, and an **SX1302-class** concentrator. Meshpoint runs after
-you flash community **Armbian** and apply the SPI/GPIO configuration below.
+onboard **eMMC**, and an **SX1302** concentrator. Meshpoint runs after you
+flash community **Armbian**.
 
-**Status (July 2026):** Community-validated on model **G295** (2 GB RAM, 64 GB
-eMMC). Meshtastic TX/RX confirmed; MeshCore companion via a **powered USB hub**
-reported working. Model **G290** (also SX1302, 2 GB / 64 GB) is expected to
-follow the same path; **G285** is untested here. This is **not** plug-and-play
-like a RAK Hotspot V2: expect manual `local.yaml`, systemd overrides, and
-kernel pin holds.
+| Model | Boot | Concentrator | Meshpoint platform id | Status |
+|---|---|---|---|---|
+| **G285** | microSD (eMMC untouched) | SX1302 | `bobcat_g285` | Implemented, **not yet validated on hardware**: see **[BOBCAT-G285.md](BOBCAT-G285.md)** |
+| **G290 / G295** | flashed to eMMC | SX1302 | `bobcat_g29x` | G295 community-validated (TX+RX); the recipe is now built in (below) |
+| G280 | microSD | **SX1301** | n/a | Not supported |
+
+Meshpoint now detects the platform explicitly
+(`src/hal/platform/`). The old manual steps (comment out `apt-get upgrade`,
+`ln -s /dev/spidev5.0 /dev/spidev0.0`, hand-written systemd drop-in with GPIO
+149/147) are **no longer needed and must be removed** if you applied them:
+
+```bash
+sudo systemctl revert meshpoint        # drops /etc/systemd/system/meshpoint.service.d/override.conf
+sudo rm -f /dev/spidev0.0 /dev/spidev0.1   # only if they are your old symlinks
+```
 
 Compare with other miners in [Hardware Matrix](HARDWARE-MATRIX.md). For Pi 4 +
 microSD installs see [Onboarding](ONBOARDING.md).
 
 ---
 
-## What you need
+## G290 / G295 install
 
-| Item | Notes |
-|------|--------|
-| Bobcat Miner 300 | G295 validated; G290 likely compatible |
-| Host | Rockchip RK3566, aarch64 |
-| Storage | Onboard eMMC (typically 64 GB) |
-| LoRa antenna | Connect before applying RF power |
-| USB OTG / hub | Onboard micro-USB is for flashing; MeshCore USB may need a **powered hub** |
-| Ethernet or Wi-Fi | For dashboard access and optional Meshradar upstream |
+### 1. Flash Armbian, do not upgrade the kernel
 
----
-
-## Step 1: Flash Armbian (do not upgrade the kernel)
-
-Use the community image and instructions:
-
-**[sicXnull/Bobcat-Armbian](https://github.com/sicXnull/Bobcat-Armbian)**
-
-That build targets Bobcat hardware. **Do not run a generic kernel upgrade**
-after install: hold the shipped kernel packages so SPI overlays keep working.
-
-After first boot:
+Use **[sicXnull/Bobcat-Armbian](https://github.com/sicXnull/Bobcat-Armbian)**
+(`Bobcat29X_EMMC_Flasher.img.xz` **overwrites the internal eMMC**; back up the
+stock firmware first if you want a way back). After first boot, before any
+`apt` command:
 
 ```bash
-sudo apt-mark hold linux-image-current-rockchip64 \
-  linux-dtb-current-rockchip64 \
-  linux-u-boot-bobcat-29x-current
+sudo apt-mark hold $(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' \
+    'linux-image-*' 'linux-dtb-*' 'linux-u-boot-*' | awk '$1=="ii"{print $2}')
+apt-mark showhold
 ```
 
----
-
-## Step 2: Enable SPI (concentrator bus)
-
-Edit `/boot/armbianEnv.txt` and add the SPI overlay:
+### 2. Install Meshpoint
 
 ```bash
-sudo nano /boot/armbianEnv.txt
-```
-
-Add:
-
-```
-overlays=spi5-m1
-```
-
-Save and reboot:
-
-```bash
-sudo reboot
-```
-
-After reboot the concentrator should appear on **`/dev/spidev5.0`** (and
-`/dev/spidev5.1` for the secondary chip select if present).
-
----
-
-## Step 3: Clone Meshpoint and run the installer
-
-```bash
-sudo apt update
-sudo apt install -y git
+sudo apt-get update && sudo apt-get install -y git
 sudo git clone https://github.com/KMX415/meshpoint.git /opt/meshpoint
-```
-
-**Before running the installer**, edit `scripts/install.sh` and **comment out**
-the `apt-get upgrade` line. On Bobcat-Armbian, a full distro upgrade can replace
-the pinned kernel and break SPI.
-
-```bash
-sudo nano /opt/meshpoint/scripts/install.sh
-# Comment out: apt-get upgrade -y -qq
-```
-
-Run the installer. **Do not reboot** when it finishes (you still need config):
-
-```bash
-sudo bash /opt/meshpoint/scripts/install.sh
-```
-
----
-
-## Step 4: Setup wizard (config file only)
-
-Run the wizard to create `config/local.yaml`. The wizard may not detect the
-concentrator yet; that is expected.
-
-```bash
-sudo meshpoint setup
-```
-
-Do **not** start the service at the end of the wizard.
-
----
-
-## Step 5: Point capture at the Bobcat SPI bus
-
-Edit `/opt/meshpoint/config/local.yaml`. Set the SPI device. There is no nested
-`capture.concentrator` block: chip type is detected at start, and GPIO 149/147
-belong in the Step 6 drop-in, not yaml.
-
-```yaml
-capture:
-  sources:
-    - concentrator
-  concentrator_spi_device: "/dev/spidev5.0"
-```
-
-Save the file.
-
-Add the service user to the `dialout` group:
-
-```bash
-sudo usermod -aG dialout meshpoint
-```
-
----
-
-## Step 6: Systemd overrides (SPI symlinks, GPIO, reset)
-
-Meshpoint defaults assume `/dev/spidev0.0` and Pi-style GPIO numbering. On
-Bobcat, create a **systemd drop-in** so each service start prepares the bus
-before the concentrator opens.
-
-```bash
-sudo systemctl edit meshpoint
-```
-
-Paste the block below **above** the line that says discarded lines are ignored
-(`### Lines below this comment will be discarded`):
-
-```ini
-[Service]
-ExecStartPre=
-
-ExecStartPre=+/bin/bash -c "cp /opt/meshpoint/config/sudoers-meshpoint /etc/sudoers.d/meshpoint && chmod 440 /etc/sudoers.d/meshpoint"
-ExecStartPre=+/bin/chown -R meshpoint:meshpoint /opt/meshpoint/config
-
-ExecStartPre=+/bin/sh -c '[ ! -e /dev/spidev0.0 ] && ln -sf /dev/spidev5.0 /dev/spidev0.0 || true'
-ExecStartPre=+/bin/sh -c '[ ! -e /dev/spidev0.1 ] && ln -sf /dev/spidev5.1 /dev/spidev0.1 || true'
-
-ExecStartPre=+/bin/sh -c 'chown root:dialout /dev/spidev5.* && chmod 660 /dev/spidev5.* || true'
-
-ExecStartPre=+/bin/sh -c '[ ! -d /sys/class/gpio/gpio149 ] && echo 149 > /sys/class/gpio/export || true'
-ExecStartPre=+/bin/sh -c '[ ! -d /sys/class/gpio/gpio147 ] && echo 147 > /sys/class/gpio/export || true'
-ExecStartPre=+/bin/sleep 0.2
-
-ExecStartPre=+/bin/sh -c 'echo out > /sys/class/gpio/gpio149/direction'
-ExecStartPre=+/bin/sh -c 'echo out > /sys/class/gpio/gpio147/direction'
-
-ExecStartPre=+/bin/sh -c 'echo 1 > /sys/class/gpio/gpio147/value'
-ExecStartPre=+/bin/sh -c 'echo 0 > /sys/class/gpio/gpio149/value'
-ExecStartPre=+/bin/sleep 0.3
-ExecStartPre=+/bin/sh -c 'echo 1 > /sys/class/gpio/gpio149/value'
-ExecStartPre=+/bin/sleep 0.3
-ExecStartPre=+/bin/sh -c 'echo 0 > /sys/class/gpio/gpio149/value'
-
-ExecStartPre=+/bin/sleep 1.5
-```
-
-GPIO **147** enables the TX amplifier rail; **149** is the concentrator reset
-line. Save and exit.
-
-Reboot:
-
-```bash
-sudo reboot
-```
-
----
-
-## Step 7: Verify
-
-1. Open `http://<device-ip>:8080`, complete `/setup` if prompted (v0.7.3+).
-2. Enable TX on the Radio tab if you plan to send traffic.
-3. Check logs:
-
-```bash
-journalctl -u meshpoint -f
-```
-
-Look for chip version `0x10` (SX1302), `lgw_start()` success, and RX lines.
-Send a test message to another Meshtastic node on your bench.
-
----
-
-## Upgrades
-
-Use the normal Meshpoint update flow, but **keep `apt-get upgrade` disabled**
-in `install.sh` (or re-comment it after each pull) so the pinned Armbian kernel
-stays in place.
-
-```bash
 cd /opt/meshpoint
-sudo git fetch origin
-sudo git checkout main
-sudo git pull origin main
-sudo bash /opt/meshpoint/scripts/install.sh
-sudo systemctl restart meshpoint
+sudo bash scripts/install.sh --platform=bobcat_g29x
 ```
 
-Community reports: v0.7.3.1 to v0.7.4 upgraded cleanly with only the
-`apt-get upgrade` guard in place.
+On a Bobcat the installer never runs `apt-get upgrade`, holds the boot
+packages, simulates each `apt install` and aborts if it would touch the
+kernel/DTB/U-Boot, records the kernel in `/etc/meshpoint/bobcat-kernel.lock`,
+adds the `spi5-m1` overlay to `/boot/armbianEnv.txt` if `/dev/spidev5.0` is
+missing (then **reboot**), and pins the platform in
+`/etc/meshpoint/platform.env`. It is idempotent.
+
+### 3. Prove the hardware, then configure
+
+```bash
+sudo systemctl stop meshpoint 2>/dev/null
+sudo meshpoint hwcheck --through chip          # expect SX1302 version 0x10
+sudo meshpoint hwcheck --through hal --region US
+sudo meshpoint setup                           # choose your region deliberately
+sudo systemctl start meshpoint
+```
+
+The wizard writes `capture.concentrator_spi_device: "/dev/spidev5.0"` (or use
+`"auto"`). Then open `http://<device-ip>:8080` and enable TX on the Radio tab
+if you plan to transmit.
+
+### What the G29x profile does at every start (replaces the old drop-in)
+
+```
+147=out 1                      # PA/TX rail (G295 field report); MESHPOINT_PA_GPIO=off to disable
+149=out 0 ; wait 0.3 ; 149=1 ; wait 0.3 ; 149=0 ; wait 1.5   # active-high reset
+```
+
+Stop = hold `149=1`. SPI node ownership is granted to the `meshpoint` user by
+`ExecStartPre`, so no symlinks or `dialout` tweaks are required.
+
+### Upgrades
+
+Use the normal update flow (Settings → Updates, or `git pull` +
+`sudo bash scripts/install.sh`). The installer keeps `apt-get upgrade`
+disabled on Bobcat automatically; if the kernel changed under it the install
+stops and tells you.
 
 ---
 
@@ -228,42 +95,37 @@ Community reports: v0.7.3.1 to v0.7.4 upgraded cleanly with only the
 The front **micro-USB** port is primarily for flashing. **USB OTG for a
 MeshCore companion is unconfirmed** on G295 (a dedicated OTG cable did not
 enumerate as host). A **powered USB hub** with a self-powered companion radio
-(for example a T-Deck) has been reported working under Armbian.
-
-Configure MeshCore in `local.yaml` or the setup wizard once the serial port
-is stable. See [Hardware Matrix > MeshCore USB](HARDWARE-MATRIX.md#meshcore-usb-companion-radios).
+(for example a T-Deck) has been reported working under Armbian. See
+[Hardware Matrix > MeshCore USB](HARDWARE-MATRIX.md#meshcore-usb-companion-radios).
 
 ---
 
-## Known limits
+## Diagnostics
 
-| Area | Status |
-|------|--------|
-| Meshtastic concentrator TX/RX | Validated (bench / limited RF environment) |
-| Long-range / multi-hop soak | More field testing welcome |
-| MeshCore on-board USB OTG | Use powered hub; native OTG not confirmed |
-| G285 hardware | Untested |
-| `install.sh` without edits | Not supported (kernel upgrade risk) |
-| Bluetooth / Meshtastic phone app | Not used; use the Meshpoint web dashboard |
+```bash
+meshpoint hwcheck detect            # which platform, why, and what it found
+sudo meshpoint hwcheck              # kernel pin, SPI node, GPIO map (passive)
+sudo meshpoint hwcheck --through chip   # ACTIVE: reset + read SX1302 version
+meshpoint status                    # includes Platform and Radio health
+```
 
----
+Active stages refuse to run while the `meshpoint` service is running.
 
-## Troubleshooting
+## Troubleshooting (G29x; G285 table in [BOBCAT-G285.md](BOBCAT-G285.md))
 
-**`Ignoring unknown config key(s): capture.concentrator`:** An older version of
-this guide showed a nested `concentrator:` block. Meshpoint ignores it. Use
-`concentrator_spi_device` as in Step 5, keep the Step 6 drop-in, then restart.
+**`Ignoring unknown config key(s): capture.concentrator`:** use
+`concentrator_spi_device` (flat), not a nested block.
 
-**Chip version 0x00:** Re-check SPI overlay, symlinks, GPIO reset sequence in
-the systemd drop-in, and that kernel packages are still **held**. Power-cycle
-with antenna connected.
+**Radio shows `RADIO DOWN` / `Radio: FAILED`:** the SX1302 did not answer on
+SPI. `sudo meshpoint hwcheck --through chip` shows `0x00` (held in
+reset/unpowered/latched), `0xFF` (SPI not muxed). Power-cycle with the
+antenna connected and confirm the kernel lock check passes.
 
-**Permission denied on `/dev/spidev5.0`:** Confirm `meshpoint` is in `dialout`
-and the `chmod 660` `ExecStartPre` lines run (see drop-in above).
+**`permission denied` on the spidev node:** restart the service; `ExecStartPre`
+re-applies ownership. Running `hwcheck` needs `sudo`.
 
-**Service fails after `apt upgrade`:** Kernel drift. Reflash or restore
-Bobcat-Armbian, re-apply `apt-mark hold`, and avoid uncommenting
-`apt-get upgrade` in `install.sh`.
+**Service fails after `apt upgrade`:** kernel drift. Restore Bobcat-Armbian,
+re-hold the packages, re-run `install.sh`.
 
 For general Meshpoint errors see [COMMON-ERRORS.md](COMMON-ERRORS.md) and
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
