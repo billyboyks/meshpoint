@@ -342,6 +342,7 @@ PA line: add `MESHPOINT_PA_GPIO=147` to `/etc/meshpoint/platform.env`,
 | Dashboard OK, **radio dead** | preflight failed | `meshpoint status` → `Radio: FAILED` + error; sidebar `RADIO DOWN` | `Radio: OK, SX1302 0x10` | follow the error text |
 | Works until **reboot** | `platform.env` missing / ExecStartPre failing | `systemctl status meshpoint`; `cat /etc/meshpoint/platform.env` | `MESHPOINT_PLATFORM=bobcat_g285` present | re-run `install.sh --platform=bobcat_g285` |
 | Works until **kernel update** | kernel/DTB replaced | `uname -r` vs `/etc/meshpoint/bobcat-kernel.lock`; `apt-mark showhold`; `meshpoint hwcheck` | pin PASS | restore image/kernel (Section 6); re-hold |
+| `pip ... ReadTimeoutError` during install | slow/flaky link to files.pythonhosted.org | re-run the installer (idempotent; HAL build is skipped on re-run) | install completes | `sudo bash scripts/install.sh --platform=bobcat_g285` again; the installer now uses `PIP_DEFAULT_TIMEOUT=120`, `PIP_RETRIES=10`; prefer Ethernet |
 | Installer aborts "apt would change the kernel" | a dependency pulls a newer kernel package | read the printed `Inst linux-…` line | none | do not force; install that package manually after review |
 
 ## 6. Recovery

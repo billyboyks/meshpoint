@@ -30,6 +30,11 @@ SERVICE_FILE="scripts/meshpoint.service"
 WATCHDOG_SERVICE_FILE="scripts/network-watchdog.service"
 CLI_SCRIPT="scripts/meshpoint"
 
+# Slow links (Bobcat on Wi-Fi/weak Ethernet) time out on large wheels with
+# pip's 15 s default; be patient and retry instead of aborting the install.
+export PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-120}"
+export PIP_RETRIES="${PIP_RETRIES:-10}"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -100,7 +105,8 @@ info "Platform: ${MP_PLATFORM} (confidence: ${MP_PLATFORM_CONFIDENCE})"
 if command -v python3 >/dev/null 2>&1 \
         && ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'; then
     warn "System python3 is $(python3 -c 'import platform; print(platform.python_version())'); Meshpoint documents Python 3.12+."
-    warn "Continuing; if pip or startup fails, install python3.12 (not via a kernel-touching upgrade)."
+    warn "Static checks found no 3.12-only syntax or stdlib calls, so this usually works, but CI only runs 3.12."
+    warn "If pip or startup fails, install python3.12 without a kernel-touching upgrade."
 fi
 
 BOBCAT_LOCK="/etc/meshpoint/bobcat-kernel.lock"
