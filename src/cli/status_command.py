@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import urllib.error
 import urllib.request
 from datetime import timedelta
 from pathlib import Path
@@ -22,6 +23,7 @@ def show_status() -> None:
 
     _show_service_state()
     _show_platform()
+    _show_radio_health()
     _show_config_state()
     _show_api_status()
 
@@ -63,6 +65,31 @@ def _show_platform() -> None:
         print(f"                   ! {warning}")
 
 
+def _show_radio_health() -> None:
+    """Radio health mirrored to disk by the service (no login needed)."""
+    from src.hal.platform import health
+
+    snap = health.read_snapshot_file()
+    if snap is None:
+        print("  Radio:           no data yet (service not started, or no concentrator)")
+        return
+    label = {
+        "ok": "OK",
+        "failed": "FAILED",
+        "starting": "starting",
+        "unconfigured": "no concentrator configured",
+    }.get(snap.get("state", ""), snap.get("state", "unknown"))
+    chip = f", SX1302 {snap['chip_version']}" if snap.get("chip_version") else ""
+    spi = f" on {snap['spi_device']}" if snap.get("spi_device") else ""
+    print(f"  Radio:           {label}{chip}{spi}")
+    if snap.get("error"):
+        print(f"                   ! {snap['error']}")
+    if snap.get("state") == "failed":
+        print("  Overall:         DEGRADED (service up, concentrator not running)")
+    if snap.get("updated_at"):
+        print(f"  Radio updated:   {snap['updated_at']}")
+
+
 def _show_config_state() -> None:
     """Check whether local.yaml exists."""
     if LOCAL_CONFIG.exists():
@@ -77,24 +104,16 @@ def _show_api_status() -> None:
         req = urllib.request.Request(STATUS_ENDPOINT, method="GET")
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            print(f"  API:             up, login required (HTTP {exc.code}); "
+                  f"open {DASHBOARD_URL} in a browser for details")
+        else:
+            print(f"  API:             error (HTTP {exc.code})")
+        return
     except Exception:
         print("  API:             unreachable")
         return
-
-    radio = data.get("radio") or {}
-    radio_state = radio.get("state", "unknown")
-    label = {
-        "ok": "OK",
-        "failed": "FAILED",
-        "starting": "starting",
-        "unconfigured": "no concentrator configured",
-    }.get(radio_state, radio_state)
-    chip = f", SX1302 {radio['chip_version']}" if radio.get("chip_version") else ""
-    print(f"  Radio:           {label}{chip}")
-    if radio.get("error"):
-        print(f"                   ! {radio['error']}")
-    if data.get("status") == "degraded":
-        print("  Overall:         DEGRADED (service up, concentrator not running)")
 
     uptime = timedelta(seconds=data.get("uptime_seconds", 0))
     device_id = data.get("device_id", "unknown")

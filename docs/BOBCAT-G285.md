@@ -5,7 +5,7 @@ concentrator, booting **Bobcat-Armbian from a microSD card**. The original
 Helium firmware on the internal eMMC is never touched; removing the SD card
 and powering up returns the unit to stock.
 
-> **Validation status: Levels 1-3 validated on a physical G285; Levels 4-11 pending.**
+> **Validation status: Levels 1-7 (receive path) validated on a physical G285; TX (8-9), reboot (10) and power-cycle (11) pending.**
 > Every hardware fact below is labelled with how it is known:
 > **source** (read from a repository file), **field** (community report,
 > other model), **derived** (computed from source facts), **UNKNOWN**
@@ -38,6 +38,21 @@ Output of `sudo meshpoint hwcheck --through chip` on a physical G285
 | Python | `3.11.2` (Debian 12 userland) |
 | GPIO sequence | 13 actions ran cleanly: rails 125/122 cycled, reset 149 pulsed active-high |
 | **SX1302 chip ID** | **`0x10` on 5 of 5 reads** at 2 MHz after the sequence |
+| HAL (Level 4) | `hwcheck --through hal --region US`: `lgw_start` and `lgw_stop` PASS on Python 3.11.2; the HAL's optional temperature-sensor probe fails harmlessly (no `i2c-1`) |
+| RX window | 600 s `hwcheck --through rx` heard nothing (`crc_bad=0 no_crc=0`): no nearby traffic in that window, not a fault |
+| **Real RX + decode + dashboard (Levels 5-7)** | Service ran for ~1.5 days; the `packets` table holds 3 decoded **NodeInfo** broadcasts from node `!0d945eb0` (a distant solar node) to `!ffffffff`, all `capture_source=concentrator`, 906.875 MHz, SF11, BW 250 kHz |
+
+RX evidence (from `packets`):
+
+| UTC time | packet_id | RSSI dBm | SNR dB |
+|---|---|---|---|
+| 2026-10-05 18:35:58 | `8d2ad86d` | -99.4 | -6.0 |
+| 2026-10-06 03:35:58 | `5d2f4070` | -98.4 | -5.0 |
+| 2026-10-06 09:35:58 | `df309872` | -98.4 | -4.5 |
+
+Only one transmitter was heard, at weak but decodable levels (LongFast SF11
+decodes down to roughly -17 dB SNR), so this proves RX works but says little
+about reliability or sensitivity.
 
 What this proves: the reset script's GPIO numbers, polarity and the rail
 power-cycle bring the SX1302 up on a G285 and SPI works end to end. What it does

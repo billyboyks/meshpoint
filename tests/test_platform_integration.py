@@ -246,3 +246,63 @@ def test_meshpoint_hwcheck_passes_options_through(argv, expected):
         cli_main.main()
     hw.assert_called_once_with(expected)
     assert exit_info.value.code == 0
+
+
+# ── radio health is mirrored to disk for `meshpoint status` ─────────
+
+def test_health_snapshot_is_written_and_readable(tmp_path, monkeypatch):
+    path = tmp_path / "data" / "radio_health.json"
+    monkeypatch.setenv("MESHPOINT_HEALTH_FILE", str(path))
+    health.reset_for_tests()
+    health.set_starting("/dev/spidev1.0", "bobcat_g285")
+    health.set_chip_version(0x10)
+    health.set_ok()
+    snap = health.read_snapshot_file()
+    assert snap["state"] == "ok"
+    assert snap["chip_version"] == "0x10"
+    assert snap["spi_device"] == "/dev/spidev1.0"
+    assert snap["platform"] == "bobcat_g285"
+    health.set_failed("SX1302 not responding")
+    assert health.read_snapshot_file()["state"] == "failed"
+
+
+def test_health_write_failure_never_breaks_the_radio(tmp_path, monkeypatch):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    monkeypatch.setenv("MESHPOINT_HEALTH_FILE", str(blocker / "sub" / "h.json"))
+    health.reset_for_tests()
+    health.set_ok()  # must not raise
+    assert health.snapshot()["state"] == health.OK
+
+
+def test_status_shows_radio_from_file_without_api(tmp_path, monkeypatch, capsys):
+    from src.cli import status_command
+
+    monkeypatch.setenv("MESHPOINT_HEALTH_FILE", str(tmp_path / "h.json"))
+    health.reset_for_tests()
+    health.set_starting("/dev/spidev1.0", "bobcat_g285")
+    health.set_chip_version(0x10)
+    health.set_ok()
+    status_command._show_radio_health()
+    out = capsys.readouterr().out
+    assert "Radio:           OK, SX1302 0x10 on /dev/spidev1.0" in out
+
+    health.set_failed("SX1302 not responding - 0x00")
+    status_command._show_radio_health()
+    out = capsys.readouterr().out
+    assert "FAILED" in out and "0x00" in out and "DEGRADED" in out
+
+
+def test_status_reports_login_required_not_unreachable(monkeypatch, capsys):
+    import urllib.error
+
+    from src.cli import status_command
+
+    def fake_urlopen(*a, **k):
+        raise urllib.error.HTTPError("http://x", 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(status_command.urllib.request, "urlopen", fake_urlopen)
+    status_command._show_api_status()
+    out = capsys.readouterr().out
+    assert "login required (HTTP 401)" in out
+    assert "unreachable" not in out
