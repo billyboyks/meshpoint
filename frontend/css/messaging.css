@@ -30,10 +30,21 @@
 
 /* ── Outer panel ────────────────────────────────────────────────── */
 
+/* The panel lives inside a fixed-height, overflow:hidden shell that also holds
+ * the top bar. Sizing it from the viewport (100vh) ignored the bar, so it
+ * overflowed its section and focusing the composer scrolled the whole chat
+ * window upward. Fill the space the shell actually has instead. */
+#messaging-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .messaging {
     display: flex;
-    height: calc(100vh - 32px);
-    min-height: 480px;
+    flex: 1 1 auto;
+    min-height: 0;
     margin: 16px clamp(12px, 2vw, 24px);
     background: var(--msg-bg);
     border: 1px solid var(--msg-border);
@@ -924,7 +935,6 @@
 @media (max-width: 720px) {
     .messaging {
         flex-direction: column;
-        height: calc(100vh - 16px);
         margin: 8px;
     }
     .msg-sidebar {

@@ -2,6 +2,15 @@
 
 ### Unreleased
 
+#### Messages
+
+- **Opening a channel no longer shifts the chat window up.** The panel was
+  sized `calc(100vh - 32px)` but sits below the top bar in a fixed-height,
+  `overflow: hidden` shell, so it overflowed by the bar's height and focusing
+  the composer scrolled the whole window, cutting off the header and top
+  buttons. The panel now fills the space its container has (desktop and
+  narrow-screen rules), and the composer is focused with `preventScroll`.
+
 #### Map
 
 - **Nodes that share a position can be reached.** Meshtastic nodes with

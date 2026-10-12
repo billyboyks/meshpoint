@@ -71,7 +71,8 @@ class MessagingChat {
         this._input.placeholder = isUnmapped
             ? "Can't reply: no matching local channel"
             : 'Type a message…';
-        if (!isUnmapped) this._input.focus();
+        // preventScroll: never let focusing the composer scroll the shell.
+        if (!isUnmapped) this._input.focus({ preventScroll: true });
         this._loadMessages();
     }
 
