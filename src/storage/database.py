@@ -149,6 +149,24 @@ class DatabaseManager:
 
         await self._cleanup_cross_protocol_name_contamination()
         await self._cleanup_meshcore_placeholder_names()
+        await self._cleanup_null_island_positions()
+
+    async def _cleanup_null_island_positions(self) -> None:
+        """Clear nodes stored at exactly (0, 0): that is "no GPS fix".
+
+        Older versions saved the no-fix Position as 0.0 / 0.0, stacking every
+        such node on one map marker. Idempotent; a real position repopulates
+        on the node's next fixed Position packet.
+        """
+        cursor = await self._connection.execute(
+            "UPDATE nodes SET latitude = NULL, longitude = NULL "
+            "WHERE latitude = 0 AND longitude = 0"
+        )
+        if cursor.rowcount and cursor.rowcount > 0:
+            logger.warning(
+                "Migration: cleared %d node(s) stored at (0, 0) (no GPS fix)",
+                cursor.rowcount,
+            )
 
     async def _cleanup_cross_protocol_name_contamination(self) -> None:
         """Repair Meshtastic node rows whose long_name was overwritten by a

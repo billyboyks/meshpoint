@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from src.models.geo import valid_coordinates
 from src.models.node import Node
 from src.storage.database import DatabaseManager
 
@@ -25,6 +26,11 @@ class NodeRepository:
         self._db = db
 
     async def upsert(self, node: Node) -> None:
+        # (0, 0) means "no GPS fix", never a real position; storing it would
+        # also overwrite a good stored position via COALESCE below.
+        latitude, longitude = valid_coordinates(node.latitude, node.longitude) if (
+            node.latitude is not None and node.longitude is not None
+        ) else (node.latitude, node.longitude)
         await self._db.execute(
             """
             INSERT INTO nodes (
@@ -59,7 +65,7 @@ class NodeRepository:
             (
                 node.node_id, node.long_name, node.short_name,
                 node.hardware_model, node.firmware_version, node.protocol,
-                node.role, node.public_key, node.latitude, node.longitude, node.altitude,
+                node.role, node.public_key, latitude, longitude, node.altitude,
                 node.last_heard.isoformat(), node.first_seen.isoformat(),
                 node.packet_count,
             ),
@@ -98,7 +104,8 @@ class NodeRepository:
 
     async def get_with_position(self) -> list[Node]:
         rows = await self._db.fetch_all(
-            "SELECT * FROM nodes WHERE latitude IS NOT NULL AND longitude IS NOT NULL"
+            "SELECT * FROM nodes WHERE latitude IS NOT NULL AND longitude IS NOT NULL "
+            "AND NOT (latitude = 0 AND longitude = 0)"
         )
         return [self._row_to_node(r) for r in rows]
 

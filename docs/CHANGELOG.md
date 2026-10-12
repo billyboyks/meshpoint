@@ -2,6 +2,17 @@
 
 ### Unreleased
 
+#### Map
+
+- **No-fix nodes no longer stack on one marker.** A Meshtastic Position packet
+  with no GPS fix (latitude_i = longitude_i = 0) was stored as 0.0 / 0.0
+  ("Null Island"), putting every such node on a single point, and a later
+  no-fix report overwrote a node's real stored position. Decoders now drop
+  (0, 0) and out-of-range coordinates, the node upsert never persists them,
+  a startup migration clears rows already stored at (0, 0), and the map skips
+  them. (The v0.7.9 Null Island filter only covered the Stats farthest-node
+  tile.)
+
 #### Bobcat Miner 300 (G285 / G290 / G295)
 
 - **Explicit platform layer** (`src/hal/platform/`): detects `raspberry_pi`,

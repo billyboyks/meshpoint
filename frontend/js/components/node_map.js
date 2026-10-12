@@ -166,6 +166,9 @@ class NodeMap {
             const lat = n.latitude;
             const lon = n.longitude;
             if (lat == null || lon == null) continue;
+            // (0, 0) is "no GPS fix", not a location; plotting it stacks every
+            // no-fix node on one marker off the coast of Africa.
+            if (lat === 0 && lon === 0) continue;
 
             bounds.push([lat, lon]);
             this._addNodeMarker(n);

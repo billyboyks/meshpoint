@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from src.models.geo import valid_coordinates
 from src.models.packet import PacketType
 
 PORTNUM_TEXT = 1
@@ -45,9 +46,10 @@ def _decode_position(payload: bytes) -> _Result:
 
         pos = mesh_pb2.Position()
         pos.ParseFromString(payload)
+        lat, lon = valid_coordinates(pos.latitude_i * 1e-7, pos.longitude_i * 1e-7)
         return {
-            "latitude": pos.latitude_i * 1e-7,
-            "longitude": pos.longitude_i * 1e-7,
+            "latitude": lat,
+            "longitude": lon,
             "altitude": pos.altitude if pos.altitude else None,
             "sats_in_view": pos.sats_in_view if pos.sats_in_view else None,
             "precision_bits": pos.precision_bits if pos.precision_bits else None,

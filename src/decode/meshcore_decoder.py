@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.decode.crypto_service import CryptoService
+from src.models.geo import valid_coordinates
 from src.models.node import Node
 from src.models.packet import Packet, PacketType, Protocol
 from src.models.signal import SignalMetrics
@@ -200,6 +201,9 @@ class MeshcoreDecoder:
         lat = payload.get("latitude")
         lon = payload.get("longitude")
         if lat is None or lon is None:
+            return
+        lat, lon = valid_coordinates(lat, lon)
+        if lat is None:
             return
         node.latitude = lat
         node.longitude = lon
