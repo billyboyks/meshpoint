@@ -4,6 +4,11 @@
 
 #### Messages
 
+- **Clicking a sender name in a chat bubble opens the node drawer.** The
+  handler checked `window.nodeDrawer`, but `app.js` kept the drawer in a local
+  variable, so the click silently did nothing. It is now exposed on `window`
+  and the clicked name is shown while details load.
+
 - **Opening a channel no longer shifts the chat window up.** The panel was
   sized `calc(100vh - 32px)` but sits below the top bar in a fixed-height,
   `overflow: hidden` shell, so it overflowed by the bar's height and focusing

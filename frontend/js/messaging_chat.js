@@ -314,7 +314,10 @@ class MessagingChat {
         this._messagesEl.addEventListener('click', (e) => {
             const el = e.target.closest('.msg-bubble__sender[data-node-id]');
             if (!el || !window.nodeDrawer) return;
-            window.nodeDrawer.open({ node_id: el.dataset.nodeId });
+            window.nodeDrawer.open({
+                node_id: el.dataset.nodeId,
+                display_name: el.textContent.trim(),
+            });
         });
     }
 

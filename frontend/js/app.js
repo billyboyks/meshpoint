@@ -162,6 +162,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (backdrop) backdrop.classList.remove('nd-backdrop--visible');
         origClose();
     };
+    // Expose for views outside this boot function (Messages sender-name
+    // click-through checks window.nodeDrawer and silently does nothing
+    // without it).
+    window.nodeDrawer = nodeDrawer;
 
     packetFeed.setOnFocus(sourceId => {
         if (sourceId) nodeMap.drawFocusLine(sourceId);
