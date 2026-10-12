@@ -50,7 +50,11 @@ class NodeMap {
 
         this._markerGroup = L.markerClusterGroup({
             maxClusterRadius: 50,
-            disableClusteringAtZoom: 13,
+            // Do not switch clustering off at a mid zoom: Meshtastic nodes with
+            // reduced position precision report the centre of a grid cell, so
+            // several nodes share identical coordinates. Left clustered, they
+            // fan out (spiderfy) when clicked at maximum zoom; with clustering
+            // disabled they would sit exactly on top of each other.
             spiderfyOnMaxZoom: true,
             showCoverageOnHover: false,
             iconCreateFunction: (cluster) => {

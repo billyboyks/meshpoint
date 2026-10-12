@@ -4,6 +4,11 @@
 
 #### Map
 
+- **Nodes that share a position can be reached.** Meshtastic nodes with
+  reduced position precision report the centre of a grid cell, so nodes in
+  the same cell have identical coordinates. The map no longer disables
+  clustering at zoom 13, so those markers fan out when clicked at maximum
+  zoom instead of lying exactly on top of each other.
 - **No-fix nodes no longer stack on one marker.** A Meshtastic Position packet
   with no GPS fix (latitude_i = longitude_i = 0) was stored as 0.0 / 0.0
   ("Null Island"), putting every such node on a single point, and a later
